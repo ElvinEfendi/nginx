@@ -1997,6 +1997,7 @@ static ngx_int_t
 ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
 {
     ngx_pool_cleanup_t  *cln;
+    ngx_file_info_t     fi;
 
     pscf->ssl = ngx_pcalloc(cf->pool, sizeof(ngx_ssl_t));
     if (pscf->ssl == NULL) {
@@ -2031,6 +2032,20 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
             != NGX_OK)
         {
             return NGX_ERROR;
+        }
+
+        if (pscf->ssl_sync_enable) {
+            if (ngx_file_info((const char *) pscf->ssl_certificate.data, &fi) == NGX_FILE_ERROR) {
+                return NGX_ERROR;
+            }
+
+            pscf->ssl_certificate_mtime = fi.st_mtime;
+
+            if (ngx_file_info((const char *) pscf->ssl_certificate_key.data, &fi) == NGX_FILE_ERROR) {
+                return NGX_ERROR;
+            }
+
+            pscf->ssl_certificate_key_mtime = fi.st_mtime;
         }
     }
 
