@@ -259,7 +259,7 @@ static ngx_command_t  ngx_stream_proxy_commands[] = {
       NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_msec_slot,
       NGX_STREAM_SRV_CONF_OFFSET,
-      offsetof(ngx_stream_ssl_sync_srv_conf_t, ssl_sync_interval),
+      offsetof(ngx_stream_proxy_srv_conf_t, ssl_sync_interval),
       NULL },
 
     { ngx_string("proxy_ssl_session_reuse"),
@@ -1856,7 +1856,7 @@ ngx_stream_proxy_create_main_conf(ngx_conf_t *cf)
         return NULL;
     }
 
-    return conf
+    return conf;
 }
 
 
@@ -2101,7 +2101,7 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
 static ngx_int_t
 ngx_stream_proxy_collect_server(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
 {
-    ngx_stream_ssl_sync_main_conf_t  *pmcf;
+    ngx_stream_proxy_main_conf_t     *pmcf;
     ngx_stream_proxy_srv_conf_t      **pscfp;
 
     pmcf = ngx_stream_conf_get_module_main_conf(cf, ngx_stream_proxy_module);
@@ -2118,9 +2118,9 @@ ngx_stream_proxy_collect_server(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *psc
 static void
 ngx_stream_proxy_ssl_sync_handler(ngx_event_t *ev)
 {
-    ngx_stream_proxy_srv_conf_t  *pscf = ev.data;
+    ngx_stream_proxy_srv_conf_t  *pscf = ev->data;
     ngx_file_info_t              fi;
-    time_t                       new_ssl_certificate_mtime
+    time_t                       new_ssl_certificate_mtime;
     time_t                       new_ssl_certificate_key_mtime;
 
     if (ngx_file_info((const char *) pscf->ssl_certificate.data, &fi) == NGX_FILE_ERROR) {
@@ -2138,7 +2138,7 @@ ngx_stream_proxy_ssl_sync_handler(ngx_event_t *ev)
     if (new_ssl_certificate_mtime != pscf->ssl_certificate_mtime ||
         new_ssl_certificate_key_mtime != pscf->ssl_certificate_key_mtime)
     {
-        ngx_stream_proxy_set_ssl(pscf->cf, pscf, 1)
+        ngx_stream_proxy_set_ssl(pscf->cf, pscf, 1);
     }
 
     ngx_add_timer(ev, pscf->ssl_sync_interval);
@@ -2148,7 +2148,7 @@ ngx_stream_proxy_ssl_sync_handler(ngx_event_t *ev)
 
 
 static ngx_int_t
-ngx_stream_proxy_init_process(ngx_conf_t *cycle)
+ngx_stream_proxy_init_process(ngx_cycle_t *cycle)
 {
 
 #if (NGX_STREAM_SSL)
@@ -2156,7 +2156,7 @@ ngx_stream_proxy_init_process(ngx_conf_t *cycle)
     ngx_stream_proxy_main_conf_t  *pmcf;
     ngx_stream_proxy_srv_conf_t  	**pscfp;
 
-    pmcf = ngx_stream_cycle_get_module_main_conf(cycle, ngx_stream_ssl_sync_module);
+    pmcf = ngx_stream_cycle_get_module_main_conf(cycle, ngx_stream_proxy_module);
 
     pscfp = pmcf->servers.elts;
 
