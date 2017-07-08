@@ -106,6 +106,8 @@ static void ngx_stream_proxy_ssl_handshake(ngx_connection_t *pc);
 static ngx_int_t ngx_stream_proxy_ssl_name(ngx_stream_session_t *s);
 static ngx_int_t ngx_stream_proxy_set_ssl(ngx_conf_t *cf,
     ngx_stream_proxy_srv_conf_t *pscf);
+static ngx_int_t ngx_stream_proxy_collect_server(ngx_conf_t *cf,
+    ngx_stream_proxy_srv_conf_t *pscf);
 
 
 static ngx_conf_bitmask_t  ngx_stream_proxy_ssl_protocols[] = {
@@ -1979,6 +1981,10 @@ ngx_stream_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
         return NGX_CONF_ERROR;
     }
 
+    if (conf->ssl_sync_enable && ngx_stream_proxy_collect_server(cf, conf) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
 #endif
 
     return NGX_CONF_OK;
@@ -2050,6 +2056,23 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
         if (ngx_ssl_crl(cf, pscf->ssl, &pscf->ssl_crl) != NGX_OK) {
             return NGX_ERROR;
         }
+    }
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_stream_proxy_collect_server(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
+{
+    ngx_stream_ssl_sync_main_conf_t  *pmcf;
+    ngx_stream_proxy_srv_conf_t      **pscfp;
+
+    pmcf = ngx_stream_conf_get_module_main_conf(cf, ngx_stream_proxy_module);
+
+    pscfp = ngx_array_push(&pmcf->servers);
+    if (pscfp == NULL) {
+      return NGX_ERROR;
     }
 
     return NGX_OK;
