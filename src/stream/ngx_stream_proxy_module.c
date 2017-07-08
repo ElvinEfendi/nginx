@@ -1035,6 +1035,11 @@ ngx_stream_proxy_ssl_init_connection(ngx_stream_session_t *s)
 
     pscf = ngx_stream_get_module_srv_conf(s, ngx_stream_proxy_module);
 
+    if (pscf->new_ssl != NULL) {
+      *pscf->ssl = *pscf->new_ssl;
+      ngx_free(pscf->new_ssl);
+    }
+
     if (ngx_ssl_create_connection(pscf->ssl, pc, NGX_SSL_BUFFER|NGX_SSL_CLIENT)
         != NGX_OK)
     {
