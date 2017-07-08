@@ -2111,6 +2111,8 @@ ngx_stream_proxy_collect_server(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *psc
       return NGX_ERROR;
     }
 
+    *pscfp = pscf;
+
     return NGX_OK;
 }
 
