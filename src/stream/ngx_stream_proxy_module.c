@@ -56,18 +56,14 @@ typedef struct {
     ngx_array_t                     *ssl_passwords;
 
     ngx_ssl_t                       *ssl;
-    ngx_ssl_t                       *new_ssl;
     time_t                          ssl_certificate_mtime;
     time_t                          ssl_certificate_key_mtime;
     ngx_event_t                     ssl_sync_ev;
+    ngx_flag_t                      ssl_synced;
 #endif
 
     ngx_stream_upstream_srv_conf_t  *upstream;
     ngx_stream_complex_value_t      *upstream_value;
-
-    ngx_conf_t                      *cf; /* TODO(elvinefendi) find a better way for
-                                            accessing this variable from ngx_stream_proxy_ssl_sync_handler */
-
 } ngx_stream_proxy_srv_conf_t;
 
 
@@ -111,7 +107,7 @@ static void ngx_stream_proxy_ssl_init_connection(ngx_stream_session_t *s);
 static void ngx_stream_proxy_ssl_handshake(ngx_connection_t *pc);
 static ngx_int_t ngx_stream_proxy_ssl_name(ngx_stream_session_t *s);
 static ngx_int_t ngx_stream_proxy_set_ssl(ngx_conf_t *cf,
-    ngx_stream_proxy_srv_conf_t *pscf, ngx_int_t use_new_ssl);
+    ngx_stream_proxy_srv_conf_t *pscf);
 static ngx_int_t ngx_stream_proxy_collect_server(ngx_conf_t *cf,
     ngx_stream_proxy_srv_conf_t *pscf);
 static void ngx_stream_proxy_ssl_sync_handler(ngx_event_t *ev);
@@ -1035,9 +1031,10 @@ ngx_stream_proxy_ssl_init_connection(ngx_stream_session_t *s)
 
     pscf = ngx_stream_get_module_srv_conf(s, ngx_stream_proxy_module);
 
-    if (pscf->new_ssl != NULL) {
-      *pscf->ssl = *pscf->new_ssl;
-      ngx_free(pscf->new_ssl);
+    if (!pscf->ssl_synced) {
+        ngx_log_error(NGX_LOG_NOTICE, pscf->ssl->log, 0, "syncing...(actually implement this)");
+
+        pscf->ssl_synced = 1;
     }
 
     if (ngx_ssl_create_connection(pscf->ssl, pc, NGX_SSL_BUFFER|NGX_SSL_CLIENT)
@@ -1900,6 +1897,9 @@ ngx_stream_proxy_create_srv_conf(ngx_conf_t *cf)
 
 #if (NGX_STREAM_SSL)
     conf->ssl_enable = NGX_CONF_UNSET;
+    conf->ssl_sync_enable = NGX_CONF_UNSET;
+    conf->ssl_sync_interval = NGX_CONF_UNSET_MSEC;
+    conf->ssl_synced = NGX_CONF_UNSET;
     conf->ssl_session_reuse = NGX_CONF_UNSET;
     conf->ssl_server_name = NGX_CONF_UNSET;
     conf->ssl_verify = NGX_CONF_UNSET;
@@ -1989,15 +1989,13 @@ ngx_stream_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 
     ngx_conf_merge_ptr_value(conf->ssl_passwords, prev->ssl_passwords, NULL);
 
-    if (conf->ssl_enable && ngx_stream_proxy_set_ssl(cf, conf, 0) != NGX_OK) {
+    if (conf->ssl_enable && ngx_stream_proxy_set_ssl(cf, conf) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
 
-    if (conf->ssl_sync_enable && ngx_stream_proxy_collect_server(cf, conf) != NGX_OK) {
+    if (ngx_stream_proxy_collect_server(cf, conf) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
-
-    conf->cf = cf;
 
 #endif
 
@@ -2008,20 +2006,19 @@ ngx_stream_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 #if (NGX_STREAM_SSL)
 
 static ngx_int_t
-ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_int_t use_new_ssl)
+ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf)
 {
     ngx_pool_cleanup_t  *cln;
     ngx_file_info_t     fi;
-    ngx_ssl_t           *ssl;
 
-    ssl = ngx_pcalloc(cf->pool, sizeof(ngx_ssl_t));
-    if (ssl == NULL) {
+    pscf->ssl = ngx_pcalloc(cf->pool, sizeof(ngx_ssl_t));
+    if (pscf->ssl == NULL) {
         return NGX_ERROR;
     }
 
-    ssl->log = cf->log;
+    pscf->ssl->log = cf->log;
 
-    if (ngx_ssl_create(ssl, pscf->ssl_protocols, NULL) != NGX_OK) {
+    if (ngx_ssl_create(pscf->ssl, pscf->ssl_protocols, NULL) != NGX_OK) {
         return NGX_ERROR;
     }
 
@@ -2031,7 +2028,8 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
     }
 
     cln->handler = ngx_ssl_cleanup_ctx;
-    cln->data = ssl;
+    cln->data = pscf->ssl;
+
 
     if (pscf->ssl_certificate.len) {
 
@@ -2042,7 +2040,7 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
             return NGX_ERROR;
         }
 
-        if (ngx_ssl_certificate(cf, ssl, &pscf->ssl_certificate,
+        if (ngx_ssl_certificate(cf, pscf->ssl, &pscf->ssl_certificate,
                                 &pscf->ssl_certificate_key, pscf->ssl_passwords)
             != NGX_OK)
         {
@@ -2064,7 +2062,7 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
         }
     }
 
-    if (ngx_ssl_ciphers(cf, ssl, &pscf->ssl_ciphers, 0) != NGX_OK) {
+    if (ngx_ssl_ciphers(cf, pscf->ssl, &pscf->ssl_ciphers, 0) != NGX_OK) {
         return NGX_ERROR;
     }
 
@@ -2075,7 +2073,7 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
             return NGX_ERROR;
         }
 
-        if (ngx_ssl_trusted_certificate(cf, ssl,
+        if (ngx_ssl_trusted_certificate(cf, pscf->ssl,
                                         &pscf->ssl_trusted_certificate,
                                         pscf->ssl_verify_depth)
             != NGX_OK)
@@ -2083,16 +2081,12 @@ ngx_stream_proxy_set_ssl(ngx_conf_t *cf, ngx_stream_proxy_srv_conf_t *pscf, ngx_
             return NGX_ERROR;
         }
 
-        if (ngx_ssl_crl(cf, ssl, &pscf->ssl_crl) != NGX_OK) {
+        if (ngx_ssl_crl(cf, pscf->ssl, &pscf->ssl_crl) != NGX_OK) {
             return NGX_ERROR;
         }
     }
 
-    if (use_new_ssl) {
-        pscf->ssl = ssl;
-    } else {
-        pscf->new_ssl = ssl;
-    }
+    pscf->ssl_synced = 1;
 
     return NGX_OK;
 }
@@ -2137,10 +2131,13 @@ ngx_stream_proxy_ssl_sync_handler(ngx_event_t *ev)
     }
     new_ssl_certificate_key_mtime = fi.st_mtime;
 
+
     if (new_ssl_certificate_mtime != pscf->ssl_certificate_mtime ||
         new_ssl_certificate_key_mtime != pscf->ssl_certificate_key_mtime)
     {
-        ngx_stream_proxy_set_ssl(pscf->cf, pscf, 1);
+      pscf->ssl_synced = 0;
+      pscf->ssl_certificate_mtime = new_ssl_certificate_mtime;
+      pscf->ssl_certificate_key_mtime = new_ssl_certificate_key_mtime;
     }
 
     ngx_add_timer(ev, pscf->ssl_sync_interval);
@@ -2154,6 +2151,7 @@ ngx_stream_proxy_init_process(ngx_cycle_t *cycle)
 {
 
 #if (NGX_STREAM_SSL)
+
     ngx_uint_t                    i;
     ngx_stream_proxy_main_conf_t  *pmcf;
     ngx_stream_proxy_srv_conf_t  	**pscfp;
@@ -2163,11 +2161,13 @@ ngx_stream_proxy_init_process(ngx_cycle_t *cycle)
     pscfp = pmcf->servers.elts;
 
     for (i = 0; i < pmcf->servers.nelts; i++) {
-        pscfp[i]->ssl_sync_ev.handler = ngx_stream_proxy_ssl_sync_handler;
-				pscfp[i]->ssl_sync_ev.log = cycle->log;
-        pscfp[i]->ssl_sync_ev.data = pscfp[i];
+        if (pscfp[i]->ssl_sync_enable) {
+            pscfp[i]->ssl_sync_ev.handler = ngx_stream_proxy_ssl_sync_handler;
+				    pscfp[i]->ssl_sync_ev.log = cycle->log;
+            pscfp[i]->ssl_sync_ev.data = pscfp[i];
 
-        ngx_add_timer(&pscfp[i]->ssl_sync_ev, pscfp[i]->ssl_sync_interval);
+            ngx_add_timer(&pscfp[i]->ssl_sync_ev, pscfp[i]->ssl_sync_interval);
+        }
     }
 
 #endif
